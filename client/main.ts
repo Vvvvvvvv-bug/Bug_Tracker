@@ -1,284 +1,585 @@
-import { loadBugs, saveBugs, searchBugs, escapeHtml as e, statuses, priorities } from './data.ts';
-import type { Bug, Priority, Status } from './data.ts';
-import bugIcon from './favicon.svg';
-
-const app = document.querySelector<HTMLDivElement>('#app');
-if (!app) throw new Error('Не найден элемент страницы #app.');
-const root: HTMLDivElement = app;
-let storage: Storage | null;
-try { storage = localStorage; } catch { storage = null; }
-let bugs = loadBugs(storage);
-let query = '';
-let status = '';
-let editingBugId: number | null = null;
-let savedBugId: number | null = null;
-
-const statusLabels: Record<Status, string> = {
-  Open: 'Открыт',
-  'In Progress': 'В работе',
-  Fixed: 'Исправлен',
-  Verified: 'Проверен',
-  Closed: 'Закрыт',
-  Reopened: 'Переоткрыт',
-  Rejected: 'Отклонён',
-};
-const statusStyles: Record<Status, string> = {
-  Open: 'neutral',
-  'In Progress': 'working',
-  Fixed: 'done',
-  Verified: 'done',
-  Closed: 'neutral',
-  Reopened: 'reopened',
-  Rejected: 'neutral',
-};
-const bugLink = '<a class="back-link" href="#/bugs"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3m4-4L3 8l4 4"/></svg>К списку багов</a>';
-
-function date(value: string): string {
-  if (!value) return '<span class="muted">Не задан</span>';
-  const formatted = new Date(`${value}T12:00:00`).toLocaleDateString('ru-RU');
-  return `<time datetime="${e(value)}">${e(formatted)}</time>`;
-}
-
-function badge(value: Status): string {
-  return `<span class="status ${statusStyles[value]}">${statusLabels[value]}</span>`;
-}
-
-function options(values: readonly string[]): string {
-  return values.map(value => `<option>${e(value)}</option>`).join('');
-}
-
-function editableOptions(values: readonly string[], selected: string, labels?: Record<string, string>): string {
-  return values.map(value => `<option value="${e(value)}" ${value === selected ? 'selected' : ''}>${e(labels?.[value] ?? value)}</option>`).join('');
-}
-
-function validDeadline(value: string): boolean {
-  if (!value) return true;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T12:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
-
-function heading(title: string, action = ''): string {
-  return `<div class="page-heading"><h1>${title}</h1>${action}</div>`;
-}
-
-function table(found: Bug[]): string {
-  if (!found.length) {
-    return `<div class="empty"><h2>${bugs.length ? 'Ничего не найдено' : 'Багов пока нет'}</h2>
-      <p>${bugs.length ? 'Измените запрос или выберите другой статус.' : 'Добавьте первый баг проекта.'}</p></div>`;
-  }
-
-  return `<table class="bug-table" role="table" aria-label="Баги проекта">
-    <thead role="rowgroup"><tr role="row">
-      <th scope="col" role="columnheader">№</th><th scope="col" role="columnheader">Название</th>
-      <th scope="col" role="columnheader">Статус</th><th scope="col" role="columnheader">Приоритет</th>
-      <th scope="col" role="columnheader">Разработчик</th><th scope="col" role="columnheader">Срок</th>
-    </tr></thead>
-    <tbody role="rowgroup">${found.map(b => `<tr role="row">
-      <td class="number" role="cell">#${b.id}</td>
-      <th class="bug-title" scope="row" role="rowheader"><a href="#/bug/${b.id}">${e(b.title)}</a></th>
-      <td class="bug-status" role="cell">${badge(b.status)}</td>
-      <td class="bug-priority" role="cell"><span class="mobile-label" aria-hidden="true">Приоритет</span>${e(b.priority)}</td>
-      <td class="bug-assignee" role="cell"><span class="mobile-label" aria-hidden="true">Разработчик</span>${b.assignee ? e(b.assignee) : '<span class="muted">Не назначен</span>'}</td>
-      <td class="date" role="cell"><span class="mobile-label" aria-hidden="true">Срок</span>${date(b.deadline)}</td>
-    </tr>`).join('')}</tbody>
-  </table>`;
-}
-
-function list(): string {
-  const found = searchBugs(bugs, query, status);
-  return heading('Баги проекта', '<a class="button primary" href="#/new"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Добавить баг</a>')
-    + `<div class="filters">
-        <div class="search-field">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4"/><path d="m10 10 3 3"/></svg>
-          <input id="search" type="search" aria-label="Поиск багов" placeholder="Номер или название бага" value="${e(query)}">
-        </div>
-        <select id="status" aria-label="Статус"><option value="">Все статусы</option>${statuses.map(value => `<option value="${value}" ${value === status ? 'selected' : ''}>${statusLabels[value]}</option>`).join('')}</select>
-      </div>
-      <div id="bug-list">${table(found)}</div>
-      <p id="result-count" class="table-caption" role="status">Показано ${found.length} из ${bugs.length}</p>`;
-}
-
-function updateList(): void {
-  const found = searchBugs(bugs, query, status);
-  const results = document.querySelector('#bug-list');
-  const count = document.querySelector('#result-count');
-  if (results) results.innerHTML = table(found);
-  if (count) count.textContent = `Показано ${found.length} из ${bugs.length}`;
-}
-
-function detail(id: number): string {
-  const b = bugs.find(item => item.id === id);
-  if (!b) return bugLink + heading('Баг не найден');
-
-  const editing = editingBugId === b.id;
-  const developers = [...new Set(bugs.map(item => item.assignee).filter(Boolean))];
-  const meta = editing
-    ? `<form id="edit-bug-form" class="bug-meta-editor" data-bug-id="${b.id}">
-        <label for="edit-status">Статус</label>
-        <select id="edit-status" name="status" required>${editableOptions(statuses, b.status, statusLabels)}</select>
-        <label for="edit-priority">Приоритет</label>
-        <select id="edit-priority" name="priority" required>${editableOptions(priorities, b.priority)}</select>
-        <label for="edit-assignee">Разработчик</label>
-        <input id="edit-assignee" name="assignee" type="text" list="developer-options" maxlength="100" value="${e(b.assignee)}" placeholder="Не назначен">
-        <datalist id="developer-options">${developers.map(name => `<option value="${e(name)}"></option>`).join('')}</datalist>
-        <label for="edit-deadline">Дедлайн</label>
-        <input id="edit-deadline" name="deadline" type="date" value="${e(b.deadline)}">
-        <p id="edit-error" class="edit-error" role="alert"></p>
-        <div class="edit-form-actions">
-          <button class="button" type="button" data-action="cancel-edit">Отмена</button>
-          <button class="button primary" type="submit">Сохранить</button>
-        </div>
-      </form>`
-    : `<dl class="bug-meta">
-        <div><dt>Статус</dt><dd>${badge(b.status)}</dd></div>
-        <div><dt>Приоритет</dt><dd>${e(b.priority)}</dd></div>
-        <div><dt>Разработчик</dt><dd>${b.assignee ? e(b.assignee) : '<span class="muted">Не назначен</span>'}</dd></div>
-        <div><dt>Срок</dt><dd>${date(b.deadline)}</dd></div>
-      </dl>`;
-
-  return `${bugLink}${heading(`<span class="number">#${b.id}</span> ${e(b.title)}`)}
-    <div class="detail-layout">
-      <article class="bug-description">${section('Что происходит', b.description)}${section('Шаги воспроизведения', b.steps)}${section('Ожидаемый результат', b.expected)}</article>
-      ${meta}
-      ${editing ? '' : '<div class="detail-actions"><button class="button edit-trigger" type="button" data-action="edit-bug">ИЗМЕНИТЬ</button></div>'}
-    </div>
-    ${savedBugId === b.id && !editing ? '<p class="save-notice" role="status">Изменения сохранены.</p>' : ''}`;
-}
-
-function section(title: string, text: string): string {
-  return `<section class="description-section"><h2>${title}</h2><p>${e(text)}</p></section>`;
-}
-
-function form(): string {
-  return `${bugLink}${heading('Новый баг')}
-    <form id="bug-form" class="bug-form"><p id="form-error" role="alert"></p>
-      <label for="title">Название *</label><input id="title" name="title" required minlength="5" maxlength="150">
-      <label for="description">Что происходит *</label><textarea id="description" name="description" required maxlength="3000"></textarea>
-      <label for="steps">Шаги воспроизведения *</label><textarea id="steps" name="steps" required maxlength="3000" placeholder="Каждый шаг с новой строки"></textarea>
-      <label for="expected">Ожидаемый результат *</label><textarea id="expected" name="expected" required maxlength="3000"></textarea>
-      <label for="priority">Приоритет</label><select id="priority" name="priority">${options(priorities)}</select>
-      <div class="form-actions"><a class="button" href="#/bugs">Отмена</a><button class="button primary" type="submit">Добавить баг</button></div>
-    </form>`;
-}
-function render(): void {
-  const path = location.hash.slice(2).split('/');
-  const page = ['new', 'bug', 'releases', 'members'].includes(path[0]) ? path[0] : 'bugs';
-  let content: string;
-  if (page === 'new') content = form();
-  else if (page === 'bug') content = detail(Number(path[1]));
-  else if (page === 'releases') content = heading('Релизы') + '<table class="secondary-table" aria-label="Релизы"><thead><tr><th scope="col">Версия</th><th scope="col">Плановая дата</th><th scope="col">Статус</th></tr></thead><tbody><tr><td>v1.1</td><td><time datetime="2026-11-26">26.11.2026</time></td><td>Запланирован</td></tr></tbody></table>';
-  else if (page === 'members') content = heading('Участники') + '<table class="secondary-table" aria-label="Участники"><thead><tr><th scope="col">Имя</th><th scope="col">Роль</th></tr></thead><tbody><tr><td>Анна</td><td>Lead</td></tr><tr><td>Олег</td><td>QA</td></tr><tr><td>Ильдар</td><td>Dev</td></tr></tbody></table>';
-  else content = list();
-  root.innerHTML = `<header class="site-header"><div class="page-width header-inner"><a class="brand" href="#/bugs"><img src="${bugIcon}" width="26" height="26" alt="">Трекер багов</a>
-    <nav class="tabs" aria-label="Разделы проекта">
-      ${[['bugs', 'Баги'], ['releases', 'Релизы'], ['members', 'Участники']].map(([key, title]) => `<a href="#/${key}" ${key === (['bug', 'new'].includes(page) ? 'bugs' : page) ? 'aria-current="page"' : ''}>${title}</a>`).join('')}
-    </nav></div></header><main id="main" class="page-width content" tabindex="-1">${content}</main>`;
-  const pageTitle = page === 'new' ? 'Новый баг' : page === 'releases' ? 'Релизы' : page === 'members' ? 'Участники' : 'Баги';
-  document.title = `${pageTitle} · Трекер багов`;
-}
-
-document.addEventListener('input', event => {
-  if (event.target instanceof HTMLInputElement && event.target.id === 'search') {
-    query = event.target.value;
-    updateList();
-  }
-});
-document.addEventListener('change', event => {
-  if (event.target instanceof HTMLSelectElement && event.target.id === 'status') {
-    status = event.target.value;
-    updateList();
-  }
-});
-document.addEventListener('click', event => {
-  if (!(event.target instanceof Element)) return;
-  if (event.target.closest('.skip-link')) {
-    event.preventDefault();
-    document.querySelector<HTMLElement>('#main')?.focus();
-    return;
-  }
-
-  const action = event.target.closest<HTMLButtonElement>('button[data-action]')?.dataset.action;
-  if (action === 'edit-bug') {
-    const id = Number(location.hash.match(/^#\/bug\/(\d+)$/)?.[1]);
-    if (!bugs.some(b => b.id === id)) return;
-    editingBugId = id;
-    savedBugId = null;
-    render();
-    document.querySelector<HTMLSelectElement>('#edit-status')?.focus();
-  } else if (action === 'cancel-edit') {
-    editingBugId = null;
-    render();
-    document.querySelector<HTMLButtonElement>('[data-action="edit-bug"]')?.focus();
-  }
-});
-document.addEventListener('submit', event => {
-  if (!(event.target instanceof HTMLFormElement)) return;
-  if (event.target.id === 'edit-bug-form') {
-    event.preventDefault();
-    const bugId = Number(event.target.dataset.bugId);
-    const bug = bugs.find(item => item.id === bugId);
-    if (!bug || editingBugId !== bugId) return;
-
-    const values = new FormData(event.target);
-    const field = (name: string): string => String(values.get(name) ?? '').trim();
-    const newStatus = field('status');
-    const newPriority = field('priority');
-    const assignee = field('assignee');
-    const deadline = field('deadline');
-    const error = document.querySelector<HTMLParagraphElement>('#edit-error');
-
-    if (!statuses.some(value => value === newStatus) || !priorities.some(value => value === newPriority)
-      || assignee.length > 100 || !validDeadline(deadline)) {
-      if (error) error.textContent = 'Проверьте статус, приоритет, разработчика и дату дедлайна.';
-      return;
+import { loadBugs, saveBugs, escapeHtml as e, statuses, priorities } from './data.ts';
+import type { ExtendedBug as Bug, Status, Priority } from './data.ts';
+const root = document.querySelector<HTMLDivElement>('#app')!;
+const get = <T>(k: string, d: T): T => {
+    try {
+        return JSON.parse(localStorage.getItem(k) || 'null') ?? d;
     }
-
-    const updated: Bug = {
-      ...bug,
-      status: newStatus as Status,
-      priority: newPriority as Priority,
-      assignee,
-      deadline,
+    catch {
+        return d;
+    }
+};
+const put = (k: string, v: unknown) => localStorage.setItem(k, JSON.stringify(v));
+const seed: Bug[] = [
+    [
+        14,
+        'Пропадает расписание',
+        'Высокий',
+        'In Progress',
+        'Ильдар',
+        '2026-11-20'
+    ],
+    [
+        12,
+        'Долгий вход',
+        'Средний',
+        'Reopened',
+        'Ильдар',
+        '2026-11-12'
+    ],
+    [
+        11,
+        'Не сохраняется тема оформления',
+        'Средний',
+        'Verified',
+        'Ильдар',
+        '2026-11-15'
+    ],
+    [
+        17,
+        'Падает экспорт в PDF',
+        'Средний',
+        'In Progress',
+        'Ильдар',
+        '2026-11-22'
+    ],
+    [
+        18,
+        'Долго грузится вход',
+        'Средний',
+        'Rejected',
+        '',
+        ''
+    ],
+    [
+        13,
+        'Съезжает таблица в Safari',
+        'Низкий',
+        'Verified',
+        'Ильдар',
+        '2026-11-19'
+    ],
+    [
+        15,
+        'Опечатка в меню',
+        'Низкий',
+        'Open',
+        '',
+        ''
+    ]
+].map(([id, title, priority, status, assignee, deadline]) => ({
+    id: Number(id),
+    title: String(title),
+    priority: priority as Priority,
+    status: status as Status,
+    assignee: String(assignee),
+    deadline: String(deadline),
+    description: Number(id) === 14 ? 'После нажатия «Сохранить» добавленная пара исчезает из расписания.' : '',
+    steps: Number(id) === 14 ? '1. Открыть «Расписание».  2. Добавить пару, нажать «Сохранить».  3. Обновить страницу.' : '',
+    expected: Number(id) === 14 ? 'Пара видна после перезагрузки страницы.' : '',
+    release: Number(id) === 17 ? 'v1.2' : Number(id) === 15 ? '' : 'v1.1',
+    reason: Number(id) === 14 ? 'Ломает демо на защите 18.11' : '',
+    environment: Number(id) === 14 ? 'Chrome 130, сборка 1.0.3' : '',
+    attachments: Number(id) === 14 ? ['console.log', 'screen.png'] : [],
+    author: 'Олег (QA)',
+    created: '2026-11-15',
+    history: Number(id) === 14 ? ['18.11 10:02  Ильдар: Open → In Progress', '16.11 14:30  Анна: план задан', '15.11 09:12  Олег: баг зарегистрирован'] : [],
+    project: 'StudyPlanner'
+}));
+let bugs = get<Bug[]>('tracker.bugs.v2', localStorage.getItem('bug-tracker.basic-ts.v1') ? loadBugs(localStorage) : seed);
+let projects = get('tracker.projects', [{
+        name: 'StudyPlanner',
+        description: 'Приложение для расписания пар',
+        repo: 'https://git.example/team/studyplanner',
+        role: 'Lead'
+    }, {
+        name: 'Bookshelf',
+        description: 'Учёт книг в общежитии',
+        repo: '',
+        role: 'Dev'
+    }]);
+let project = get('tracker.project', 'StudyPlanner');
+let user = get('tracker.user', {
+    name: 'Олег',
+    role: 'QA',
+    email: 'oleg@student.example'
+});
+let members = get('tracker.members', [
+    {
+        name: 'Анна',
+        email: 'anna@student.example',
+        roles: ['Lead']
+    },
+    {
+        name: 'Олег',
+        email: 'oleg@student.example',
+        roles: ['QA']
+    },
+    {
+        name: 'Ильдар',
+        email: 'ildar@student.example',
+        roles: ['Dev']
+    },
+    {
+        name: 'Мария',
+        email: 'maria@student.example',
+        roles: ['QA', 'Dev']
+    }
+]);
+let releases = get('tracker.releases', [{
+        version: 'v1.2',
+        date: '2026-12-10',
+        published: ''
+    }, {
+        version: 'v1.1',
+        date: '2026-11-18',
+        published: ''
+    }, {
+        version: 'v1.0',
+        date: '2026-10-01',
+        published: '2026-10-01'
+    }]);
+let filters = {
+    q: '',
+    status: '',
+    priority: '',
+    assignee: '',
+    release: '',
+    mine: false,
+    late: false
+};
+let modal = '';
+let active = 0;
+let files: File[] = [];
+let linkCount = 1;
+const today = () => new Date().toLocaleDateString('en-CA');
+const fmt = (s?: string) => s ? s.split('-').reverse().join('.') : '—';
+const save = () => {
+    put('tracker.bugs.v2', bugs);
+    saveBugs(localStorage, bugs);
+    put('tracker.projects', projects);
+    put('tracker.project', project);
+    put('tracker.user', user);
+    put('tracker.members', members);
+    put('tracker.releases', releases);
+};
+const opt = (arr: readonly string[], sel = '', all?: string) => (all !== undefined ? `<option value="">${all}</option>` : '') + arr.map(v => `<option ${v === sel ? 'selected' : ''} value="${e(v)}">${e(v)}</option>`).join('');
+const field = (label: string, html: string) => `<label class="field"><span>${label}</span>${html}</label>`;
+const input = (name: string, value = '', type = 'text', extra = '') => `<input name="${name}" type="${type}" value="${e(value)}" ${extra}>`;
+const select = (name: string, arr: readonly string[], sel = '', all?: string) => `<select name="${name}">${opt(arr, sel, all)}</select>`;
+const btn = (label: string, action: string, cls = '') => `<button type="button" class="button ${cls}" data-action="${action}">${label}</button>`;
+const go = (p: string) => {
+    modal = '';
+    location.hash = '/' + p;
+    render();
+};
+const badge = (s: string) => `<span class="badge ${s.toLowerCase().replace(' ', '-')}">${e(s)}</span>`;
+const current = () => bugs.filter(b => (b.project || 'StudyPlanner') === project);
+const heading = (title: string, action = '', sub = '') => `<div class="heading"><div><h1>${title}</h1>${sub ? `<p class="muted">${sub}</p>` : ''}</div>${action}</div>`;
+const table = (heads: string[], rows: string[][]) => `<div class="table-wrap"><table><thead><tr>${heads.map(x => `<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(x => `<td>${x}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+function listRows() {
+    const all = current();
+    const f = filters;
+    const found = all.filter(b => (!f.q || `#${b.id} ${b.title} ${b.description}`.toLowerCase().includes(f.q.toLowerCase())) && (!f.status || b.status === f.status) && (!f.priority || b.priority === f.priority) && (!f.assignee || b.assignee === f.assignee) && (!f.release || b.release === f.release) && (!f.mine || b.assignee === user.name) && (!f.late || !!b.deadline && b.deadline < today() && !['Verified', 'Closed', 'Rejected'].includes(b.status))).sort((a, b) => priorities.indexOf(a.priority) - priorities.indexOf(b.priority) || (a.deadline || '9999').localeCompare(b.deadline || '9999') || (a.created || '').localeCompare(b.created || ''));
+    return table([
+        '№',
+        'Название',
+        'Статус',
+        'Приоритет',
+        'Исполнитель',
+        'Дедлайн'
+    ], found.map(b => [
+        `#${b.id}`,
+        `<a class="title-link" href="#/bug/${b.id}">${e(b.title)}</a>`,
+        badge(b.status),
+        e(b.priority),
+        e(b.assignee || '—'),
+        `<span class="${b.deadline && b.deadline < today() && !['Verified', 'Closed', 'Rejected'].includes(b.status) ? 'red' : ''}">${fmt(b.deadline)}${b.deadline && b.deadline < today() && !['Verified', 'Closed', 'Rejected'].includes(b.status) ? ' (!)' : ''}</span>`
+    ])) + `<p class="note">Показано ${found.length} из ${all.length} · сортировка: приоритет → дедлайн → дата регистрации</p>`;
+}
+function list() {
+    return heading('Баги проекта', `<a class="button primary" href="#/new">+ Зарегистрировать баг</a>`) + `<div class="panel filters"><div class="filter-grid">${field('Поиск', input('q', filters.q, 'search', 'placeholder="Номер или текст"'))}${field('Статус', select('status', statuses, filters.status, 'Все'))}${field('Приоритет', select('priority', priorities, filters.priority, 'Все'))}${field('Исполнитель', select('assignee', members.map(m => m.name), filters.assignee, 'Все'))}${field('Релиз', select('release', releases.map(r => r.version), filters.release, 'Все'))}</div><div class="filter-links"><label><input type="checkbox" name="mine" ${filters.mine ? 'checked' : ''}> Мои задачи</label><label><input type="checkbox" name="late" ${filters.late ? 'checked' : ''}> Просроченные</label>${btn('Сбросить фильтры', 'reset', 'link')}</div></div><div id="rows">${listRows()}</div>`;
+}
+const section = (title: string, value: string) => `<section><h3>${title}</h3><p>${e(value || '—')}</p></section>`;
+function detail(b: Bug) {
+    const rel = releases.find(r => r.version === b.release);
+    return `<a class="back" href="#/bugs">‹ К списку</a><div class="detail-title"><h1>#${b.id} ${e(b.title)}</h1>${badge(b.status)}<strong class="${b.priority === 'Высокий' ? 'red' : ''}">${e(b.priority)}</strong></div><div class="detail-grid"><article class="panel">${section('Что происходит', b.description)}${section('Шаги воспроизведения', b.steps)}${section('Ожидаемый результат', b.expected)}${section('Окружение и вложения', [b.environment, ...(b.attachments || [])].filter(Boolean).join(' · '))}<section><h3>Ссылки на изменения</h3><p class="blue">${(b.links || []).map(e).join('<br>') || '—'}</p></section><section><h3>История</h3><p class="muted">${(b.history || []).map(e).join('<br>') || '—'}</p></section></article><aside class="panel"><h2>План</h2>${[
+        ['Релиз', b.release ? b.release + ' · ' + fmt(rel?.date) : '—'],
+        ['Дедлайн', fmt(b.deadline)],
+        ['Основание', b.reason],
+        ['Исполнитель', b.assignee],
+        ['Автор', b.author],
+        ['Создан', fmt(b.created)]
+    ].map(([k, v]) => `<div class="meta"><span>${k}</span><strong>${e(v || '—')}</strong></div>`).join('')}</aside>\
+</div>\
+<div class="panel actions">\
+<span class="muted">Действия (видны только доступные роли и статусу)</span>\
+<div>${user.role === 'Lead' ? btn('Изменить план', 'plan', 'primary') : ''}${user.role === 'Dev' && ['Open', 'Reopened'].includes(b.status) ? btn('Взять в работу', 'start-work', 'primary') : ''}${user.role === 'Dev' && b.status === 'In Progress' ? btn('Передать на проверку', 'review', 'primary') : ''}${user.role === 'QA' && b.status === 'Fixed' ? btn('Подтвердить', 'verify', 'green') + btn('Вернуть', 'return', 'danger') : ''}${user.role === 'Lead' && !['Verified', 'Rejected'].includes(b.status) ? btn('Отклонить', 'reject', 'danger') : ''}</div></div>`;
+}
+function newBug() {
+    return heading('Новый баг · ' + e(project)) + `<form id="new" class="panel bug-form">${field('Название *', input('title', '', 'text', 'required minlength="5" maxlength="150"'))}${field('Что происходит *', '<textarea name="description" required rows="1"></textarea>')}${field('Шаги воспроизведения *', '<textarea name="steps" required rows="1"></textarea>')}<div class="two">${field('Ожидаемый результат *', input('expected', '', 'text', 'required'))}${field('Окружение', input('environment'))}</div><div class="attachment-row">${field('Приоритет *', select('priority', priorities))}<label class="button upload">Прикрепить файлы<input id="attachments" type="file" multiple accept=".png,.jpg,.jpeg,.gif,.txt,.log,.json,.pdf">\
+</label>\
+<span id="file-names" class="blue">\
+</span>\
+</div>\
+<p class="muted small">До 10 файлов по 10 МБ: png, jpg, gif, txt, log, json, pdf</p>\
+<div class="form-actions">\
+<a class="button" href="#/bugs">Отмена</a>\
+<button class="button primary">Сохранить</button>\
+</div>\
+</form>`;
+}
+function releasePage() {
+    return heading('Релизы', btn('+ Новый релиз', 'new-release', 'primary'), 'Готово — баги релиза в Verified или Rejected') + table([
+        'Версия',
+        'Плановая дата',
+        'Статус',
+        'Готово / всего',
+        ''
+    ], releases.map(r => {
+        const a = current().filter(b => b.release === r.version);
+        return [
+            e(r.version),
+            fmt(r.date),
+            r.published ? 'Published' : 'Planned',
+            `${a.filter(b => ['Verified', 'Rejected'].includes(b.status)).length} / ${a.length}${r.published ? ' · выпущен ' + fmt(r.published) : ''}`,
+            r.published ? '' : btn('Выпустить', 'publish:' + r.version)
+        ];
+    })) + `<p class="note">«Выпустить» открывает окно со списком неготовых багов или полем фактической даты выпуска.</p>`;
+}
+function memberPage() {
+    const p = projects.find(p => p.name === project)!;
+    return heading('Участники · ' + e(project), btn('+ Добавить по email', 'member', 'primary'), 'Роли задаются в каждом ПО, их можно совмещать') + `<form id="project-info" class="panel"><h3>Сведения ПО</h3><div class="info-grid">${field('Название *', input('name', p.name, 'text', 'required'))}${field('Ссылка на репозиторий', input('repo', p.repo, 'url'))}<button class="button">Сохранить</button></div></form>` + table([
+        'Имя',
+        'Email',
+        'Lead',
+        'QA',
+        'Dev',
+        'Действия'
+    ], members.map((m, i) => [
+        e(m.name),
+        e(m.email),
+        ...['Lead', 'QA', 'Dev'].map(r => `<input type="checkbox" data-member="${i}" data-role="${r}" ${m.roles.includes(r) ? 'checked' : ''}>`),
+        m.roles.includes('Lead') ? '' : btn('Удалить', 'remove:' + i, 'link red')
+    ]));
+}
+function projectPage() {
+    return heading('Мои ПО', btn('+ Создать ПО', 'project', 'primary'), 'ПО, в которых вы участник') + `<div class="projects">${projects.map(p => `<article class="panel"><h2>${e(p.name)}</h2><p class="muted">${e(p.description)}</p><p class="blue">Ваша роль: ${e(p.role)}</p>${btn('Открыть', 'open:' + e(p.name))}</article>`).join('')}</div>\
+<p class="note">«Создать ПО» открывает окно: название *, описание, ссылка на репозиторий; создатель становится Lead.</p>`;
+}
+function auth(register: boolean) {
+    return `<div class="auth"><form id="auth" class="panel"><h1>Трекер багов</h1><p class="muted">${register ? 'Регистрация' : 'Вход в систему'}</p><nav class="tabs"><a class="${!register ? 'selected' : ''}" href="#/login">Вход</a><a class="${register ? 'selected' : ''}" href="#/register">Регистрация</a></nav>${register ? field('Имя *', input('name', '', 'text', 'required')) : ''}${field('Email *', input('email', '', 'email', 'required'))}${field('Пароль *', input('password', '', 'password', 'required minlength="5"'))}<button class="button primary">${register ? 'Зарегистрироваться' : 'Войти'}</button>\
+<p class="muted small">Демонстрационный локальный вход, без серверной авторизации.</p>\
+</form>\
+</div>`;
+}
+let publishVersion = '';
+function dialog() {
+    const b = bugs.find(x => x.id === active);
+    let title = '', body = '', submit = 'Сохранить', cls = 'primary';
+    if (modal === 'plan' && b) {
+        title = 'План бага #' + b.id;
+        body = field('Приоритет *', select('priority', priorities, b.priority)) + field('Плановый релиз *', select('release', releases.filter(r => !r.published).map(r => r.version), b.release)) + field('Дедлайн *', input('deadline', b.deadline, 'date', 'required')) + field('Основание *', input('reason', b.reason, 'text', 'required')) + field('Исполнитель', select('assignee', members.filter(m => m.roles.includes('Dev')).map(m => m.name), b.assignee, 'Не назначен')) + '<p class="muted small">Дедлайн — не раньше сегодняшнего дня и не позже плановой даты релиза.</p>';
+    }
+    else if (modal === 'review' && b) {
+        title = 'Передать на проверку · #' + b.id;
+        submit = 'Передать';
+        body = '<p>Ссылки на commit / MR *</p>' + Array.from({
+            length: linkCount
+        }, (_, i) => `<div class="link-grid">${field('Тип', select('type' + i, ['MR/PR', 'Commit']))}${field('URL', input('url' + i, '', 'url', 'required placeholder="https://"'))}</div>`).join('') + btn('+ ссылка', 'add-link') + field('Комментарий для QA', input('comment')) + `<p class="muted small">Релиз из плана: ${e(b.release || '—')} (только чтение) · ссылок от 1 до 10, только https</p>`;
+    }
+    else if (['return', 'reject'].includes(modal) && b) {
+        title = (modal === 'return' ? 'Вернуть на доработку' : 'Отклонить баг') + ' · #' + b.id;
+        submit = modal === 'return' ? 'Вернуть' : 'Отклонить';
+        cls = 'danger';
+        body = field(modal === 'return' ? 'Комментарий *' : 'Причина *', input('comment', '', 'text', 'required minlength="5" maxlength="1000"')) + '<p class="muted small">От 5 до 1000 символов.</p>';
+    }
+    else if (modal === 'project') {
+        title = 'Создать ПО';
+        body = field('Название *', input('name', '', 'text', 'required')) + field('Описание', input('description')) + field('Ссылка на репозиторий', input('repo', '', 'url'));
+    }
+    else if (modal === 'member') {
+        title = 'Добавить по email';
+        body = field('Email *', input('email', '', 'email', 'required')) + field('Роль', select('role', ['QA', 'Dev', 'Lead']));
+    }
+    else if (modal === 'new-release') {
+        title = 'Новый релиз';
+        body = field('Версия *', input('version', '', 'text', 'required')) + field('Плановая дата *', input('date', '', 'date', 'required'));
+    }
+    else if (modal === 'publish') {
+        title = 'Выпустить ' + e(publishVersion);
+        const pending = current().filter(b => b.release === publishVersion && !['Verified', 'Rejected'].includes(b.status));
+        body = pending.length ? '<p>Неготовые баги:</p>' + pending.map(b => `<p>#${b.id} ${e(b.title)}</p>`).join('') : field('Фактическая дата выпуска *', input('date', today(), 'date', 'required'));
+        submit = pending.length ? '' : 'Выпустить';
+    }
+    else
+        return '';
+    return `<div class="overlay"><form id="dialog" role="dialog" aria-modal="true" class="panel modal"><h2>${title}</h2>${body}<p id="error" class="red"></p><div class="form-actions">${btn('Отмена', 'cancel')}${submit ? `<button class="button ${cls}">${submit}</button>` : ''}</div></form></div>`;
+}
+function render() {
+    const [page, id] = location.hash.slice(2).split('/');
+    if (['login', 'register'].includes(page)) {
+        root.innerHTML = auth(page === 'register');
+        return;
+    }
+    const p = page || 'bugs';
+    active = Number(id) || active;
+    const b = bugs.find(x => x.id === active);
+    const content = p === 'projects' ? projectPage() : p === 'new' ? newBug() : p === 'bug' ? (b ? detail(b) : heading('Баг не найден')) : p === 'releases' ? releasePage() : p === 'members' ? memberPage() : list();
+    root.innerHTML = `<header><a class="brand" href="#/projects">Трекер багов</a>${p === 'projects' ? '' : `<select id="project-picker" class="project-picker">${projects.map(x => `<option value="${e(x.name)}" ${x.name === project ? 'selected' : ''}>ПО: ${e(x.name)}</option>`).join('')}<option value="@">Мои ПО</option></select>`}<div class="user"><select id="role-picker" title="Демо: смена роли">${['QA', 'Lead', 'Dev'].map(r => `<option value="${r}" ${r === user.role ? 'selected' : ''}>${e(r === user.role ? user.name : r === 'Lead' ? 'Анна' : r === 'Dev' ? 'Ильдар' : 'Олег')} · ${r}</option>`).join('')}</select><a href="#/login">Выйти</a></div></header><main>${p === 'projects' ? '' : `<nav class="tabs">${[['bugs', 'Баги'], ['releases', 'Релизы'], ['members', 'Участники']].map(([k, v]) => `<a class="${k === (['bug', 'new'].includes(p) ? 'bugs' : p) ? 'selected' : ''}" href="#/${k}">${v}</a>`).join('')}</nav>`}${modal && b && [
+        'plan',
+        'review',
+        'return',
+        'reject'
+    ].includes(modal) ? heading('#' + b.id + ' ' + e(b.title)) : content}</main>${dialog()}`;
+}
+function history(b: Bug, msg: string) {
+    (b.history ??= []).unshift(new Date().toLocaleString('ru-RU') + '  ' + user.name + ': ' + msg);
+}
+root.addEventListener('click', ev => {
+    const a = (ev.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;
+    if (!a)
+        return;
+    const b = bugs.find(x => x.id === active);
+    if (a === 'reset') {
+        filters = {
+            q: '',
+            status: '',
+            priority: '',
+            assignee: '',
+            release: '',
+            mine: false,
+            late: false
+        };
+    }
+    else if (a === 'cancel') {
+        modal = '';
+    }
+    else if (a === 'start-work' && b) {
+        if (user.role !== 'Dev' || !['Open', 'Reopened'].includes(b.status))
+            return;
+        history(b, b.status + ' → In Progress');
+        b.status = 'In Progress';
+        save();
+    }
+    else if (a === 'verify' && b) {
+        if (user.role !== 'QA' || b.status !== 'Fixed')
+            return;
+        history(b, b.status + ' → Verified');
+        b.status = 'Verified';
+        save();
+    }
+    else if (a.startsWith('open:')) {
+        project = a.slice(5);
+        save();
+        go('bugs');
+        return;
+    }
+    else if (a.startsWith('remove:')) {
+        members.splice(Number(a.slice(7)), 1);
+        save();
+    }
+    else if (a.startsWith('publish:')) {
+        publishVersion = a.slice(8);
+        modal = 'publish';
+    }
+    else if (a === 'add-link') {
+        if (linkCount >= 10)
+            return;
+        const form = document.querySelector('#dialog')!;
+        const html = document.createElement('div');
+        html.className = 'link-grid';
+        html.innerHTML = field('Тип', select('type' + linkCount, ['MR/PR', 'Commit'])) + field('URL', input('url' + linkCount, '', 'url', 'required'));
+        form.insertBefore(html, (ev.target as HTMLElement).closest('button'));
+        linkCount++;
+        return;
+    }
+    else {
+        modal = a;
+        linkCount = 1;
+    }
+    render();
+});
+function filterChange(t: HTMLInputElement | HTMLSelectElement) {
+    if (t.closest('.filters') && t.name in filters) {
+        const f = filters as Record<string, string | boolean>;
+        f[t.name] = t instanceof HTMLInputElement && t.type === 'checkbox' ? t.checked : t.value;
+        document.querySelector('#rows')!.innerHTML = listRows();
+    }
+}
+root.addEventListener('input', ev => {
+    const t = ev.target;
+    if (t instanceof HTMLInputElement && t.name === 'q')
+        filterChange(t);
+});
+root.addEventListener('change', ev => {
+    const t = ev.target;
+    if (!(t instanceof HTMLInputElement || t instanceof HTMLSelectElement))
+        return;
+    filterChange(t);
+    if (t.id === 'project-picker') {
+        if (t.value === '@') {
+            go('projects');
+            return;
+        }
+        project = t.value;
+        save();
+        go('bugs');
+    }
+    else if (t.id === 'role-picker') {
+        user.role = t.value;
+        user.name = t.value === 'Lead' ? 'Анна' : t.value === 'Dev' ? 'Ильдар' : 'Олег';
+        save();
+        render();
+    }
+    else if (t.dataset.member && t instanceof HTMLInputElement) {
+        const m = members[Number(t.dataset.member)], r = t.dataset.role!;
+        m.roles = t.checked ? [...new Set([...m.roles, r])] : m.roles.filter(x => x !== r);
+        save();
+    }
+    else if (t.id === 'attachments' && t instanceof HTMLInputElement) {
+        files = Array.from(t.files || []).filter(f => f.size <= 10 * 1024 * 1024).slice(0, 10);
+        document.querySelector('#file-names')!.textContent = files.map(f => f.name).join(' · ');
+    }
+});
+root.addEventListener('submit', ev => {
+    ev.preventDefault();
+    const form = ev.target as HTMLFormElement;
+    const d = new FormData(form);
+    const v = (k: string) => String(d.get(k) || '').trim();
+    const b = bugs.find(x => x.id === active);
+    const fail = (s: string) => {
+        const el = document.querySelector('#error');
+        if (el)
+            el.textContent = s;
+        else
+            alert(s);
     };
-    const nextBugs = bugs.map(item => item.id === bugId ? updated : item);
-    if (!saveBugs(storage, nextBugs)) {
-      if (error) error.textContent = 'Не удалось сохранить изменения. Проверьте разрешение на локальное хранение.';
-      return;
+    if (form.id === 'new') {
+        const added: Bug = {
+            id: Math.max(0, ...bugs.map(b => b.id)) + 1,
+            title: v('title'),
+            description: v('description'),
+            steps: v('steps'),
+            expected: v('expected'),
+            priority: v('priority') as Priority,
+            status: 'Open',
+            assignee: '',
+            deadline: '',
+            environment: v('environment'),
+            attachments: files.map(f => f.name),
+            author: user.name + ' (' + user.role + ')',
+            created: today(),
+            project,
+            history: []
+        };
+        history(added, 'баг зарегистрирован');
+        bugs.push(added);
+        files = [];
+        save();
+        go('bug/' + added.id);
+        return;
     }
-
-    bugs = nextBugs;
-    editingBugId = null;
-    savedBugId = bugId;
+    if (form.id === 'auth') {
+        const m = members.find(m => m.email === v('email'));
+        user = {
+            name: v('name') || m?.name || v('email').split('@')[0],
+            role: m?.roles[0] || 'QA',
+            email: v('email')
+        };
+        save();
+        go('projects');
+        return;
+    }
+    if (form.id === 'project-info') {
+        const p = projects.find(p => p.name === project)!;
+        if (projects.some(x => x !== p && x.name === v('name')))
+            return fail('Название уже существует');
+        bugs.forEach(b => {
+            if ((b.project || 'StudyPlanner') === project)
+                b.project = v('name');
+        });
+        p.name = v('name');
+        p.repo = v('repo');
+        project = p.name;
+    }
+    else if (modal === 'plan' && b) {
+        const r = releases.find(r => r.version === v('release'));
+        if (!r || v('deadline') < today() || v('deadline') > r.date)
+            return fail('Проверьте дедлайн и плановую дату релиза.');
+        Object.assign(b, {
+            priority: v('priority'),
+            release: v('release'),
+            deadline: v('deadline'),
+            reason: v('reason'),
+            assignee: v('assignee')
+        });
+        history(b, 'план задан');
+    }
+    else if (modal === 'review' && b) {
+        if (user.role !== 'Dev' || b.status !== 'In Progress')
+            return fail('Передать на проверку можно только баг в работе.');
+        const links = Array.from({
+            length: linkCount
+        }, (_, i) => v('url' + i));
+        if (links.some(x => !x.startsWith('https://')))
+            return fail('Допустимы только https-ссылки');
+        b.links = links.map((x, i) => v('type' + i) + ' ' + x + ' · ' + user.name + ' · ' + v('comment'));
+        history(b, b.status + ' → Fixed');
+        b.status = 'Fixed';
+    }
+    else if (b && ['return', 'reject'].includes(modal)) {
+        const next = modal === 'return' ? 'Reopened' : 'Rejected';
+        history(b, b.status + ' → ' + next + ' · ' + v('comment'));
+        b.status = next;
+    }
+    else if (modal === 'project') {
+        if (projects.some(p => p.name === v('name')))
+            return fail('ПО уже существует');
+        projects.push({
+            name: v('name'),
+            description: v('description'),
+            repo: v('repo'),
+            role: 'Lead'
+        });
+    }
+    else if (modal === 'member') {
+        if (members.some(m => m.email === v('email')))
+            return fail('Участник уже существует');
+        members.push({
+            name: v('email').split('@')[0],
+            email: v('email'),
+            roles: [v('role')]
+        });
+    }
+    else if (modal === 'new-release') {
+        if (releases.some(r => r.version === v('version')))
+            return fail('Релиз уже существует');
+        releases.unshift({
+            version: v('version'),
+            date: v('date'),
+            published: ''
+        });
+    }
+    else if (modal === 'publish') {
+        const r = releases.find(r => r.version === publishVersion);
+        if (r && !current().some(b => b.release === r.version && !['Verified', 'Rejected'].includes(b.status)))
+            r.published = v('date');
+    }
+    save();
+    modal = '';
     render();
-    document.querySelector<HTMLButtonElement>('[data-action="edit-bug"]')?.focus();
-    return;
-  }
-
-  if (event.target.id !== 'bug-form') return;
-  event.preventDefault();
-  const values = new FormData(event.target);
-  const field = (name: string): string => String(values.get(name) || '').trim();
-  const error = document.querySelector<HTMLParagraphElement>('#form-error');
-  if (field('title').length < 5 || !field('description') || !field('steps') || !field('expected')) {
-    if (error) error.textContent = 'Заполните обязательные поля. Название должно содержать не менее 5 символов.';
-    return;
-  }
-  const priority = field('priority');
-  if (!priorities.some(value => value === priority)) return;
-  const added: Bug = { id: Math.max(0, ...bugs.map(b => b.id)) + 1, title: field('title'), description: field('description'), steps: field('steps'), expected: field('expected'), priority: priority as Priority, status: 'Open', assignee: '', deadline: '' };
-  if (!saveBugs(storage, [...bugs, added])) {
-    if (error) error.textContent = 'Браузер не разрешает сохранить данные. Разрешите локальное хранение и повторите попытку.';
-    return;
-  }
-  bugs.push(added); query = ''; status = ''; location.hash = `/bug/${added.id}`;
 });
 window.addEventListener('hashchange', () => {
-  editingBugId = null;
-  savedBugId = null;
-  render();
-  window.scrollTo(0, 0);
-  document.querySelector<HTMLElement>('#main')?.focus({ preventScroll: true });
+    modal = '';
+    render();
 });
-if (!location.hash || location.hash === '#main') history.replaceState(null, '', '#/bugs');
+window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal) {
+        modal = '';
+        render();
+    }
+});
+if (!location.hash)
+    location.hash = '/bugs';
 render();
