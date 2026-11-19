@@ -1,18 +1,19 @@
 :root {
   font-family: system-ui, sans-serif;
   line-height: 1.5;
-  color: #17283a;
-  background: #f7f8fa;
-  --surface: #fff;
-  --surface-subtle: #f0f3f7;
-  --surface-hover: #f4f7fb;
-  --muted: #516276;
-  --line: #d7dfe8;
-  --control-line: #7b899a;
-  --accent: #234d93;
-  --accent-hover: #18396f;
-  --danger: #a12634;
-  --radius: 6px;
+  color: #302c27;
+  background: #f3efe7;
+  --surface: #fffcf7;
+  --surface-subtle: #eae4d9;
+  --surface-hover: #f5f0e7;
+  --muted: #6c6256;
+  --line: #dcd3c5;
+  --control-line: #9a8b79;
+  --accent: #705037;
+  --accent-hover: #533a27;
+  --danger: #a1392f;
+  --radius: 8px;
+  color-scheme: light;
   accent-color: var(--accent);
 }
 
@@ -25,8 +26,8 @@ body {
 }
 
 ::selection {
-  color: #122d58;
-  background: #dce9fc;
+  color: #302c27;
+  background: #e4d4bc;
 }
 
 :focus-visible {
@@ -50,7 +51,7 @@ h1, h2, p, dl, dd {
 
 h1 {
   font-size: 2rem;
-  font-weight: 680;
+  font-weight: 650;
   letter-spacing: -.025em;
   line-height: 1.2;
   overflow-wrap: anywhere;
@@ -66,7 +67,7 @@ button, input, textarea, select {
 }
 
 .page-width {
-  width: min(70rem, calc(100% - 3rem));
+  width: min(74rem, calc(100% - 4rem));
   margin-inline: auto;
 }
 
@@ -78,7 +79,8 @@ button, input, textarea, select {
 .header-inner {
   display: flex;
   align-items: center;
-  gap: 2.75rem;
+  gap: 3.5rem;
+  min-height: 76px;
 }
 
 .brand {
@@ -99,7 +101,8 @@ button, input, textarea, select {
 .tabs {
   display: flex;
   align-self: stretch;
-  gap: 1.5rem;
+  gap: .5rem;
+  align-items: center;
 }
 
 .tabs a {
@@ -107,20 +110,22 @@ button, input, textarea, select {
   align-items: center;
   justify-content: center;
   min-width: 44px;
-  min-height: 60px;
-  border-bottom: 2px solid transparent;
+  min-height: 44px;
+  padding: .5rem 1rem;
+  border-radius: var(--radius);
+  transition: color 160ms ease, background 160ms ease;
   color: var(--muted);
   font-size: .875rem;
   font-weight: 550;
 }
 
 .tabs a[aria-current] {
-  border-bottom-color: var(--accent);
+  background: var(--surface-subtle);
   color: var(--accent);
 }
 
 .content {
-  padding-block: 2.5rem 4rem;
+  padding-block: 3.5rem 4rem;
 }
 
 .content:focus {
@@ -133,7 +138,7 @@ button, input, textarea, select {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 1rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 2rem;
 }
 
 .button, .back-link {
@@ -147,18 +152,20 @@ button, input, textarea, select {
 
 .button {
   justify-content: center;
-  padding: .5rem .875rem;
+  padding: .625rem 1.125rem;
   border: 1px solid var(--control-line);
   border-radius: var(--radius);
   background: var(--surface);
   color: inherit;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
 .button:hover {
   background: var(--surface-subtle);
   text-decoration: none;
+  transform: translateY(-1px);
 }
 
 .button.primary {
@@ -203,13 +210,13 @@ input::placeholder, textarea::placeholder {
   display: flex;
   flex-wrap: wrap;
   gap: .75rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 
 .search-field {
   position: relative;
   flex: 1 1 17rem;
-  max-width: 24rem;
+  max-width: 28rem;
 }
 
 .search-field input {
@@ -231,14 +238,17 @@ input::placeholder, textarea::placeholder {
 
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: var(--surface);
   text-align: left;
 }
 
 thead th {
-  padding: .625rem 1rem;
-  border-block: 1px solid var(--line);
+  padding: .875rem 1.25rem;
+  border-bottom: 1px solid var(--line);
   background: var(--surface-subtle);
   color: var(--muted);
   font-size: .8125rem;
@@ -246,7 +256,7 @@ thead th {
 }
 
 tbody :is(td, th) {
-  padding: .875rem 1rem;
+  padding: 1.125rem 1.25rem;
   border-bottom: 1px solid var(--line);
   font-size: .875rem;
   vertical-align: middle;
@@ -260,9 +270,10 @@ tbody :is(td, th) {
   width: 4.5rem;
 }
 
-.bug-table thead th:nth-child(n + 3) {
-  width: 13%;
-}
+.bug-table thead th:nth-child(3) { width: 10rem; }
+.bug-table thead th:nth-child(4) { width: 8rem; }
+.bug-table thead th:nth-child(5),
+.bug-table thead th:nth-child(6) { width: 9rem; }
 
 .bug-table tbody tr:focus-within,
 .secondary-table tbody tr:hover {
@@ -300,7 +311,7 @@ tbody :is(td, th) {
 }
 
 .table-caption {
-  margin-top: .75rem;
+  margin-top: 1rem;
 }
 
 .bug-assignee {
@@ -325,9 +336,9 @@ tbody :is(td, th) {
   border-radius: 50%;
 }
 
-.status.working { color: #234d93; }
-.status.done { color: #266048; }
-.status.reopened { color: #865019; }
+.status.working { color: #526443; }
+.status.done { color: #39664f; }
+.status.reopened { color: #8b532d; }
 
 .status:not(.neutral)::before {
   background: currentColor;
@@ -338,8 +349,9 @@ tbody :is(td, th) {
 }
 
 .empty {
-  padding: 1.5rem 1rem;
-  border-block: 1px solid var(--line);
+  padding: 2.5rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: var(--surface);
 }
 
@@ -371,9 +383,11 @@ h1 .number {
   grid-template-columns: minmax(0, 1fr) 15rem;
   gap: 2rem;
   align-items: start;
-  max-width: 58rem;
-  border-top: 1px solid var(--line);
-  padding-top: 1.5rem;
+  max-width: 62rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 2rem;
+  background: var(--surface);
 }
 
 .bug-description {
@@ -415,7 +429,11 @@ h1 .number {
 }
 
 .bug-form {
-  max-width: 40rem;
+  max-width: 44rem;
+  padding: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
 }
 
 .bug-form label {
@@ -472,7 +490,7 @@ textarea {
   translate: 0;
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 56rem) {
   .bug-table thead {
     position: absolute;
     width: 1px;
@@ -498,7 +516,7 @@ textarea {
       "priority assignee date";
     gap: .375rem .5rem;
     align-items: baseline;
-    padding: .75rem;
+    padding: 1.25rem;
     border-bottom: 1px solid var(--line);
   }
 
@@ -536,6 +554,7 @@ textarea {
 
   .header-inner {
     display: block;
+    padding-block: .5rem;
   }
 
   .brand {
@@ -544,6 +563,7 @@ textarea {
 
   .tabs a {
     min-height: 44px;
+    padding-inline: .875rem;
   }
 
   .content {
@@ -579,6 +599,7 @@ textarea {
   .detail-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: 1.5rem;
+    padding: 1.25rem;
   }
 
   .bug-meta {
@@ -587,4 +608,58 @@ textarea {
     border: 0;
     border-top: 1px solid var(--line);
   }
+}
+
+/* Shared interaction and surface details. */
+.brand:hover {
+  text-decoration: none;
+  color: var(--accent);
+}
+
+.tabs a:hover {
+  background: var(--surface-subtle);
+  text-decoration: none;
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+.bug-title a {
+  color: inherit;
+}
+
+.bug-title a:hover {
+  color: var(--accent);
+}
+
+thead th:first-child { border-top-left-radius: 11px; }
+thead th:last-child { border-top-right-radius: 11px; }
+tbody tr:last-child > * { border-bottom: 0; }
+tbody tr:last-child > :first-child { border-bottom-left-radius: 11px; }
+tbody tr:last-child > :last-child { border-bottom-right-radius: 11px; }
+
+input, textarea, select {
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+input:hover, textarea:hover, select:hover {
+  border-color: var(--accent);
+}
+
+@media (max-width: 56rem) {
+  .bug-table tr:last-child { border-bottom: 0; }
+  .bug-table tr:first-child { border-radius: 11px 11px 0 0; }
+  .bug-table tr:last-child { border-radius: 0 0 11px 11px; }
+}
+
+@media (max-width: 35rem) {
+  .bug-form { padding: 1.25rem; }
+  .page-heading .button { width: 100%; }
+  .form-actions .button { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+  .button:hover, .button:active { transform: none; }
 }
